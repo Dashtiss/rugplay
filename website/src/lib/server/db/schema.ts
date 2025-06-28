@@ -301,3 +301,53 @@ export const apikey = pgTable("apikey", {
 }, (table) => ({
 	userIdx: index("idx_apikey_user").on(table.userId)
 }));
+
+// Game specific tables
+
+export const wheelOfFortuneSpin = pgTable("wheel_of_fortune_spin", {
+	id: serial("id").primaryKey(),
+	userId: integer("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+	betAmount: decimal("bet_amount", { precision: 20, scale: 8 }).notNull(),
+	multiplierWon: decimal("multiplier_won", { precision: 10, scale: 2 }).notNull(),
+	payoutAmount: decimal("payout_amount", { precision: 20, scale: 8 }).notNull(),
+	segmentLandedOn: varchar("segment_landed_on", { length: 50 }).notNull(),
+	timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => {
+	return {
+		userIdx: index("wheel_spin_user_id_idx").on(table.userId),
+		timestampIdx: index("wheel_spin_timestamp_idx").on(table.timestamp),
+	};
+});
+
+export const crashGameRound = pgTable("crash_game_round", {
+	id: serial("id").primaryKey(),
+	crashPoint: decimal("crash_point", { precision: 10, scale: 2 }), // Nullable until game crashes
+	startTime: timestamp("start_time", { withTimezone: true }).notNull().defaultNow(),
+	endTime: timestamp("end_time", { withTimezone: true }),
+	// For provable fairness (optional, can be added later)
+	// publicSeed: text("public_seed"),
+	// salt: text("salt"),
+	// hashedOutcome: text("hashed_outcome"),
+}, (table) => {
+	return {
+		startTimeIdx: index("crash_round_start_time_idx").on(table.startTime),
+		endTimeIdx: index("crash_round_end_time_idx").on(table.endTime),
+	};
+});
+
+export const crashGameBet = pgTable("crash_game_bet", {
+	id: serial("id").primaryKey(),
+	roundId: integer("round_id").notNull().references(() => crashGameRound.id, { onDelete: "cascade" }),
+	userId: integer("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+	betAmount: decimal("bet_amount", { precision: 20, scale: 8 }).notNull(),
+	cashOutMultiplier: decimal("cash_out_multiplier", { precision: 10, scale: 2 }), // Null if crashed before cash out
+	payoutAmount: decimal("payout_amount", { precision: 20, scale: 8 }), // Null if lost
+	timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
+	// Ensure a user can only bet once per round
+	userRoundUnique: unique("user_round_unique_idx").on(table.userId, table.roundId),
+}, (table) => {
+	return {
+		roundUserIdx: index("crash_bet_round_user_idx").on(table.roundId, table.userId),
+		userIdx: index("crash_bet_user_id_idx").on(table.userId),
+	};
+});

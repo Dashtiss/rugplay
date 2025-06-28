@@ -12,6 +12,35 @@
 	import LiveTradeSkeleton from '$lib/components/self/skeletons/LiveTradeSkeleton.svelte';
 	import SEO from '$lib/components/self/SEO.svelte';
 	import { onMount } from 'svelte';
+	import { Input } from '$lib/components/ui/input';
+	import { Button } from '$lib/components/ui/button';
+	import { activeTradeFilterCoin, loadInitialTrades } from '$lib/stores/websocket';
+	import { X, Filter } from 'lucide-svelte';
+
+	let filterInput = $state('');
+	let currentFilter = $state($activeTradeFilterCoin); // Initialize from store
+
+	// Update local state when store changes (e.g. cleared elsewhere)
+	$effect(() => {
+		currentFilter = $activeTradeFilterCoin;
+		if ($activeTradeFilterCoin === null) {
+			filterInput = '';
+		}
+	});
+
+	function applyFilter() {
+		const newFilter = filterInput.trim().toUpperCase();
+		if (newFilter) {
+			activeTradeFilterCoin.set(newFilter);
+		} else {
+			activeTradeFilterCoin.set(null); // Clear filter
+		}
+	}
+
+	function clearFilter() {
+		filterInput = '';
+		activeTradeFilterCoin.set(null);
+	}
 
 	function handleUserClick(username: string) {
 		goto(`/user/${username}`);
@@ -26,8 +55,15 @@
 	}
 
 	onMount(() => {
-		loadInitialTrades("expanded");
-	})
+		// Initial load will now use the filter from activeTradeFilterCoin store
+		// The store itself triggers re-load when filter changes.
+		// We just need to ensure it loads once on mount if not already filtered.
+		if ($activeTradeFilterCoin === null) { // Only explicitly load all if no filter is set by default
+			loadInitialTrades('expanded', null);
+		} else { // If a filter is already set (e.g. from URL persistence or previous state)
+			loadInitialTrades('expanded', $activeTradeFilterCoin);
+		}
+	});
 </script>
 
 <SEO 
@@ -43,11 +79,30 @@
 
 <div class="container mx-auto max-w-7xl p-6">
 	<header class="mb-8">
-		<div>
-			<h1 class="text-2xl font-bold sm:text-3xl">Live Trades</h1>
-			<p class="text-muted-foreground text-sm sm:text-base">
-				Real-time trading activity for all trades
-			</p>
+		<div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+			<div>
+				<h1 class="text-2xl font-bold sm:text-3xl">Live Trades</h1>
+				<p class="text-muted-foreground text-sm sm:text-base">
+					{currentFilter ? `Real-time trading activity for *${currentFilter}` : 'Real-time trading activity for all trades'}
+				</p>
+			</div>
+			<form onsubmit|preventDefault={applyFilter} class="flex items-center gap-2">
+				<Input
+					type="text"
+					bind:value={filterInput}
+					placeholder="Filter by Coin (e.g. BTC)"
+					class="w-full md:w-auto"
+				/>
+				{#if currentFilter}
+					<Button variant="ghost" type="button" onclick={clearFilter} title="Clear filter" class="p-2">
+						<X class="h-5 w-5" />
+					</Button>
+				{/if}
+				<Button type="submit" variant="outline">
+					<Filter class="mr-2 h-4 w-4" />
+					Filter
+				</Button>
+			</form>
 		</div>
 	</header>
 

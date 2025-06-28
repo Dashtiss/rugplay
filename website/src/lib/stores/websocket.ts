@@ -47,8 +47,31 @@ export const allTradesStore = writable<LiveTrade[]>([]);
 export const isConnectedStore = writable<boolean>(false);
 export const isLoadingTrades = writable<boolean>(false);
 export const priceUpdatesStore = writable<Record<string, PriceUpdate>>({});
+export const activeTradeFilterCoin = writable<string | null>(null); // For global trades page
 
 let hasLoadedInitialTrades = false;
+let currentTradeFilter: string | null = null;
+
+activeTradeFilterCoin.subscribe(newFilterValue => {
+	const oldFilterValue = currentTradeFilter;
+	currentTradeFilter = newFilterValue;
+
+	// If the filter has actually changed for the global trades view
+	if (browser && oldFilterValue !== newFilterValue) {
+		console.log(`Trade filter changed from ${oldFilterValue} to ${newFilterValue}. Reloading trades.`);
+		allTradesStore.set([]); // Clear existing trades immediately for better UX
+		isLoadingTrades.set(true); // Show loading indicator
+		loadInitialTrades('expanded', newFilterValue); // Load new set of initial trades with filter
+
+		// Resubscribe to WebSocket trade channel with new filter
+		if (isSocketConnected()) {
+			// Unsubscribe from old filtered trades if backend requires explicit unsubscribe,
+			// or server handles changing subscription on new subscribe message.
+			// sendMessage({ type: 'unsubscribe', channel: 'trades:all', coinSymbol: oldFilterValue });
+			sendMessage({ type: 'subscribe', channel: 'trades:all', coinSymbol: newFilterValue });
+		}
+	}
+});
 
 // Comment callbacks
 const commentSubscriptions = new Map<string, (message: any) => void>();
@@ -56,41 +79,63 @@ const commentSubscriptions = new Map<string, (message: any) => void>();
 // Price update callbacks
 const priceUpdateSubscriptions = new Map<string, (priceUpdate: PriceUpdate) => void>();
 
-export async function loadInitialTrades(mode: 'preview' | 'expanded' = 'preview'): Promise<void> {
-    if (!browser) return;
+export async function loadInitialTrades(
+	mode: 'preview' | 'expanded' = 'preview',
+	filterCoinSymbol: string | null = null
+): Promise<void> {
+	if (!browser) return;
 
-    if (!hasLoadedInitialTrades) {
-        isLoadingTrades.set(true);
-    }
+	// For expanded mode (live trades page), respect the global filter
+	const effectiveFilter = mode === 'expanded' ? currentTradeFilter : filterCoinSymbol;
 
-    try {
-        const params = new URLSearchParams();
+	if (!hasLoadedInitialTrades || mode === 'expanded') { // always set loading for expanded if filter might change
+		isLoadingTrades.set(true);
+	}
 
-        if (mode === 'preview') {
-            params.set('limit', '5');
-            params.set('minValue', '1000');
-        } else {
-            params.set('limit', '100');
-        }
+	try {
+		const params = new URLSearchParams();
 
-        const response = await fetch(`/api/trades/recent?${params.toString()}`);
+		if (mode === 'preview') {
+			params.set('limit', '5');
+			params.set('minValue', '1000');
+		} else {
+			params.set('limit', '100'); // Max initial load for the /live page
+		}
 
-        if (response.ok) {
-            const { trades } = await response.json();
+		if (effectiveFilter) {
+			params.set('coinSymbol', effectiveFilter);
+		}
 
-            if (mode === 'preview') {
-                liveTradesStore.set(trades);
-            } else {
-                allTradesStore.set(trades);
-            }
-        }
+		const response = await fetch(`/api/trades/recent?${params.toString()}`);
 
-        hasLoadedInitialTrades = true;
-    } catch (error) {
-        console.error('Failed to load initial trades:', error);
-    } finally {
-        isLoadingTrades.set(false);
-    }
+		if (response.ok) {
+			const { trades } = await response.json();
+
+			if (mode === 'preview') {
+				liveTradesStore.set(trades);
+			} else {
+				// When loading for expanded view, this is the source of truth based on filter
+				allTradesStore.set(trades);
+			}
+		} else {
+			// Clear store on error if it's an explicit filtered load
+			if (mode === 'expanded') {
+				allTradesStore.set([]);
+			}
+		}
+
+		if (mode !== 'expanded' || !effectiveFilter) { // only set initial loaded for non-filtered full loads
+		hasLoadedInitialTrades = true;
+		}
+
+	} catch (error) {
+		console.error('Failed to load initial trades:', error);
+		if (mode === 'expanded') {
+			allTradesStore.set([]);
+		}
+	} finally {
+		isLoadingTrades.set(false);
+	}
 }
 
 function clearReconnectTimer(): void {
@@ -119,10 +164,14 @@ function sendMessage(message: object): void {
     }
 }
 
-function subscribeToChannels(): void {
-    sendMessage({ type: 'subscribe', channel: 'trades:all' });
-    sendMessage({ type: 'subscribe', channel: 'trades:large' });
-    sendMessage({ type: 'set_coin', coinSymbol: activeCoin });
+function subscribeToChannels(filterCoinSymbol: string | null = null): void {
+	// Use the global currentTradeFilter for the 'trades:all' subscription if on /live page context
+	// For 'trades:large', it's usually a global, unfiltered feed.
+	const tradeChannelFilter = filterCoinSymbol || currentTradeFilter;
+
+	sendMessage({ type: 'subscribe', channel: 'trades:all', coinSymbol: tradeChannelFilter });
+	sendMessage({ type: 'subscribe', channel: 'trades:large' }); // Assuming large trades are always global
+	sendMessage({ type: 'set_coin', coinSymbol: activeCoin }); // For comments/price updates on a specific coin page
 }
 
 function handleTradeMessage(message: any): void {
@@ -237,13 +286,17 @@ function connect(): void {
 
     socket = new WebSocket(WEBSOCKET_URL);
 
-    loadInitialTrades();
+	// Load initial trades respecting the current filter for 'expanded' mode (live page)
+    loadInitialTrades('expanded', currentTradeFilter);
+    // Also load preview trades (usually unfiltered, unless specific logic added to loadInitialTrades for preview with filter)
+    loadInitialTrades('preview');
+
 
     socket.onopen = () => {
         console.log('WebSocket connected');
         isConnectedStore.set(true);
         clearReconnectTimer();
-        subscribeToChannels();
+        subscribeToChannels(currentTradeFilter); // Pass current filter
         
         USER_DATA.subscribe(user => {
             if (user?.id && isSocketConnected()) {
@@ -336,9 +389,9 @@ class WebSocketController {
         unsubscribeFromPriceUpdates(coinSymbol);
     }
 
-    loadInitialTrades(mode: 'preview' | 'expanded' = 'preview') {
-        loadInitialTrades(mode);
-    }
+	loadInitialTrades(mode: 'preview' | 'expanded' = 'preview', filterCoinSymbol: string | null = null) {
+		loadInitialTrades(mode, filterCoinSymbol);
+	}
 
     setUser(userId: string) {
         if (socket && socket.readyState === WebSocket.OPEN) {

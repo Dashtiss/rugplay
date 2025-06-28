@@ -2,6 +2,8 @@
 	import Coinflip from '$lib/components/self/games/Coinflip.svelte';
 	import Slots from '$lib/components/self/games/Slots.svelte';
 	import Mines from '$lib/components/self/games/Mines.svelte';
+	import WheelOfFortune from '$lib/components/self/games/WheelOfFortune.svelte';
+	import Crash from '$lib/components/self/games/Crash.svelte';
 	import { USER_DATA } from '$lib/stores/user-data';
 	import { PORTFOLIO_SUMMARY, fetchPortfolioSummary } from '$lib/stores/portfolio-data';
 	import { onMount } from 'svelte';
@@ -85,6 +87,18 @@
 		>
 			Dice
 		</Button>
+			<Button
+				variant={activeGame === 'wheel' ? 'default' : 'outline'}
+				onclick={() => (activeGame = 'wheel')}
+			>
+				Wheel
+			</Button>
+			<Button
+				variant={activeGame === 'crash' ? 'default' : 'outline'}
+				onclick={() => (activeGame = 'crash')}
+			>
+				Crash
+			</Button>
 		</div>
 
 		<!-- Game Content -->
@@ -96,6 +110,10 @@
 			<Mines bind:balance onBalanceUpdate={handleBalanceUpdate} />
 		{:else if activeGame === 'dice'}
 			<Dice bind:balance onBalanceUpdate={handleBalanceUpdate} />
+		{:else if activeGame === 'wheel'}
+			<WheelOfFortune bind:balance onBalanceUpdate={handleBalanceUpdate} />
+		{:else if activeGame === 'crash'}
+			<Crash bind:balance onBalanceUpdate={handleBalanceUpdate} />
 		{/if}
 	{/if}
 </div>
